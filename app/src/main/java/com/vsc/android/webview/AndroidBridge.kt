@@ -1,10 +1,13 @@
 package com.vsc.android.webview
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Handler
 import android.os.Looper
+import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import com.vsc.android.BuildConfig
 import com.vsc.android.runtime.RuntimeConfig
@@ -43,6 +46,22 @@ class AndroidBridge(
         }
     }
 
+    /**
+     * 强制收起输入法。
+     *
+     * WebView 的 IME 适配器只要挂上，之后每次触摸系统都会再弹一次键盘；
+     * 页面在点到非编辑区时调用这里把键盘收掉。
+     */
+    @JavascriptInterface
+    fun hideKeyboard() {
+        onMain {
+            val activity = context.findActivity() ?: return@onMain
+            val view = activity.currentFocus ?: activity.window.decorView
+            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        }
+    }
+
     @JavascriptInterface
     fun getPort(): Int = RuntimeConfig.port
 
@@ -55,6 +74,12 @@ class AndroidBridge(
     @JavascriptInterface
     fun toggleFullscreen() {
         onMain { onToggleFullscreen() }
+    }
+
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 
     private fun <T> onMain(block: () -> T): T? {

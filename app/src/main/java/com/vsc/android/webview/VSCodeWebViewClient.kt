@@ -24,9 +24,13 @@ class VSCodeWebViewClient(
 
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
-        // 页面就绪后把焦点给 WebView，保证第一次点输入框就能唤起输入法
+        // 必须让 WebView 持有窗口焦点，否则页面里的输入框拿到焦点后
+        // Chromium 的 showSoftInput 会被系统忽略（表现为点输入框不弹键盘）。
+        // 「点非输入区也弹键盘」由 IME_GUARD 在页面侧拦掉。
         view.requestFocus()
         view.evaluateJavascript(DIALOG_LAYOUT_FIX, null)
+        view.evaluateJavascript(DIALOG_DISMISS_ON_OUTSIDE_CLICK, null)
+        view.evaluateJavascript(IME_GUARD, null)
         view.evaluateJavascript(CLIPBOARD_POLYFILL, null)
         val password = RuntimeConfig.password
         if (RuntimeConfig.authMode == RuntimeConfig.AuthMode.PASSWORD && password.isNotEmpty()) {
@@ -159,6 +163,183 @@ class VSCodeWebViewClient(
             })();
         """
 
+        /**
+         * 点击浮层外部关闭。
+         *
+         * 桌面端靠 Esc 关闭浮层，平板上没有物理键盘，弹层会卡住退不掉。
+         * 需要覆盖两种结构：
+         * 1. `.quick-input-widget` —— 命令面板、「打开文件夹」等（打开文件夹走的就是这个）
+         * 2. `.monaco-dialog-modal-block` —— 模态对话框，如 Copilot 登录
+         */
+        private const val DIALOG_DISMISS_ON_OUTSIDE_CLICK = """
+            (function () {
+              if (window.__vscDismissApplied) return;
+              window.__vscDismissApplied = true;
+
+              var CANCEL_TEXT = /^(cancel|close|取消|关闭|关闭窗口)$/i;
+
+              function clickCancel(box) {
+                var buttons = box.querySelectorAll('.dialog-buttons .monaco-button');
+                for (var i = 0; i < buttons.length; i++) {
+                  var text = (buttons[i].textContent || '').trim();
+                  if (CANCEL_TEXT.test(text)) {
+                    buttons[i].click();
+                    return true;
+                  }
+                }
+                return false;
+              }
+
+              function escapeEvent(type) {
+                var event = new KeyboardEvent(type, {
+                  key: 'Escape',
+                  code: 'Escape',
+                  bubbles: true,
+                  cancelable: true,
+                });
+                // KeyboardEvent 构造器不接受 keyCode，Monaco 会读它，只能自己挂上
+                try {
+                  Object.defineProperty(event, 'keyCode', { get: function () { return 27; } });
+                  Object.defineProperty(event, 'which', { get: function () { return 27; } });
+                } catch (e) { /* 忽略 */ }
+                return event;
+              }
+
+              function sendEscape(node) {
+                if (!node || !node.dispatchEvent) return;
+                node.dispatchEvent(escapeEvent('keydown'));
+                node.dispatchEvent(escapeEvent('keyup'));
+              }
+
+              /**
+               * 只发一次 Esc，避免多余的 Esc 落到工作台上把别的弹层也关掉；
+               * 若 150ms 后对话框仍在，再补发一次到 document 兜底。
+               */
+              function tryEscape(box) {
+                var active = document.activeElement;
+                sendEscape(active && box.contains(active) ? active : box);
+
+                setTimeout(function () {
+                  if (document.contains(box)) sendEscape(document);
+                }, 150);
+              }
+
+              /** 当前可见的 quick input（命令面板 / 打开文件夹等），没有则返回 null */
+              function visibleQuickInput() {
+                var widgets = document.querySelectorAll('.quick-input-widget');
+                for (var i = 0; i < widgets.length; i++) {
+                  var el = widgets[i];
+                  var style = getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden') continue;
+                  if (el.getBoundingClientRect().height > 0) return el;
+                }
+                return null;
+              }
+
+              /** 吞掉紧随其后的一次 click，避免关弹层的同时又点到了底下的编辑器 */
+              function swallowNextClick() {
+                var swallow = function (e) {
+                  e.stopPropagation();
+                  e.preventDefault();
+                };
+                document.addEventListener('click', swallow, true);
+                setTimeout(function () {
+                  document.removeEventListener('click', swallow, true);
+                }, 350);
+              }
+
+              document.addEventListener('pointerdown', function (event) {
+                var target = event.target;
+                if (!target || !target.closest) return;
+
+                // 1) quick input：VS Code 不会因为失焦自动关，必须显式发 Esc
+                var quick = visibleQuickInput();
+                if (quick) {
+                  if (target.closest('.quick-input-widget')) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  sendEscape(quick.querySelector('input') || quick);
+                  swallowNextClick();
+
+                  setTimeout(function () {
+                    var still = document.querySelector('.quick-input-widget');
+                    if (still && still.getBoundingClientRect().height > 0) sendEscape(document);
+                  }, 150);
+                  return;
+                }
+
+                // 2) Monaco 模态对话框
+                var block = target.closest('.monaco-dialog-modal-block');
+                if (!block) return;
+                // 点在对话框本体上就交给 VS Code 自己处理
+                if (target.closest('.monaco-dialog-box')) return;
+
+                var box = block.querySelector('.monaco-dialog-box');
+                if (!box) return;
+
+                if (clickCancel(box)) return;
+
+                tryEscape(box);
+              }, true);
+            })();
+        """
+
+        /**
+         * 只在点到真正可输入的区域时才允许弹键盘。
+         *
+         * Android WebView 的 IME 适配器一旦挂上（页面上有 input 持有焦点），
+         * 之后**每次触摸**系统都会把输入法顶出来，于是点侧边栏、点菜单也会弹键盘。
+         * 这里在触摸非编辑区时主动让焦点退出编辑态，适配器随之失活。
+         */
+        private const val IME_GUARD = """
+            (function () {
+              if (window.__vscImeGuard) return;
+              window.__vscImeGuard = true;
+
+              function isEditable(el) {
+                if (!el || el.tagName === undefined) return false;
+                var tag = el.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+                if (el.isContentEditable) return true;
+                return false;
+              }
+
+              // 这些容器点下去就该出键盘（即使点到的不是 input 元素本身，
+              // 比如聊天输入框、搜索框、命令面板，点容器后内部才出现编辑元素）
+              var INPUT_REGIONS = [
+                '.monaco-editor',
+                '.quick-input-widget',
+                '.chat-input-container',
+                '.interactive-input-part',
+                '.chat-input-part',
+                '.find-widget',
+                '.search-view',
+                '.terminal-wrapper',
+              ];
+
+              function allowsKeyboard(el) {
+                if (!el || !el.closest) return false;
+                if (el.closest('input, textarea, select')) return true;
+                if (el.closest('[contenteditable="true"]')) return true;
+                for (var i = 0; i < INPUT_REGIONS.length; i++) {
+                  if (el.closest(INPUT_REGIONS[i])) return true;
+                }
+                return false;
+              }
+
+              document.addEventListener('pointerdown', function (event) {
+                if (allowsKeyboard(event.target)) return;
+
+                var active = document.activeElement;
+                if (!active || active === document.body) return;
+                if (active.blur) active.blur();
+
+                if (window.Android && Android.hideKeyboard) {
+                  try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
+                }
+              }, true);
+            })();
+        """
 
         /**
          * Android WebView 在无用户手势时拒绝 navigator.clipboard，VS Code 的粘贴会失效。
