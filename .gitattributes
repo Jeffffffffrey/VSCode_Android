@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制/归档不做换行符转换
+*.png  binary
+*.jpg  binary
+*.so   binary
+*.tgz  binary
+*.gz   binary
+*.zip  binary

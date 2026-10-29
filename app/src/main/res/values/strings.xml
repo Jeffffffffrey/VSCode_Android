@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VS Code</string>
+    <string name="notification_channel_name">运行状态</string>
+    <string name="notification_channel_desc">本地 VS Code 服务运行状态</string>
+    <string name="notification_title">VS Code 正在运行</string>
+    <string name="notification_stop">停止</string>
+</resources>

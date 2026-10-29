@@ -1,0 +1,10 @@
+本目录用于存放内置运行时归档，由 scripts/fetch-runtime.ps1 自动下载：
+
+  code-server-arm64.tgz      code-server 官方 linux-arm64 包（约 216MB）
+  rootfs.tgz                 Ubuntu Base 24.04 arm64 rootfs（约 29MB）
+  manifest.json              版本与 SHA-256 清单
+
+注意：归档必须用 .tgz 而不是 .tar.gz。
+aapt2 会对 .gz 结尾的 asset 自动解压并剥掉后缀，导致应用内拿到的文件与校验值不符。
+
+在资源就位前，APK 可以编译安装，但首次启动会明确提示缺失。

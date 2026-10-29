@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="vsc_background">#1E1E1E</color>
+    <color name="vsc_surface">#252526</color>
+    <color name="vsc_accent">#0E639C</color>
+    <color name="ic_launcher_background">#0E639C</color>
+</resources>

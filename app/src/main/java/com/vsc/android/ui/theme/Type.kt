@@ -1,0 +1,38 @@
+package com.vsc.android.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+val MonoFontFamily: FontFamily = FontFamily.Monospace
+
+val VscTypography = Typography(
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 24.sp,
+        letterSpacing = (-0.2).sp,
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 15.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+    ),
+    labelSmall = TextStyle(
+        fontFamily = MonoFontFamily,
+        fontWeight = FontWeight.Normal,
+        fontSize = 11.sp,
+    ),
+)
