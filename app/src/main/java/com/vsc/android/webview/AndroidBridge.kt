@@ -8,6 +8,8 @@ import android.os.Looper
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.vsc.android.BuildConfig
 import com.vsc.android.runtime.RuntimeConfig
 import java.util.concurrent.CountDownLatch
@@ -53,6 +55,19 @@ class AndroidBridge(
      * WebView 的 IME 适配器只要挂上，之后每次触摸系统都会再弹一次键盘；
      * 页面在点到非编辑区时调用这里把键盘收掉。
      */
+    /**
+     * 键盘当前是否可见。
+     *
+     * 页面判断「要不要收键盘」必须依赖真实状态：
+     * 只看 DOM 焦点会被 Chromium 的 native-edit-context 误导。
+     */
+    @JavascriptInterface
+    fun isKeyboardShown(): Boolean {
+        val view = webView ?: return false
+        val insets = ViewCompat.getRootWindowInsets(view) ?: return false
+        return insets.isVisible(WindowInsetsCompat.Type.ime())
+    }
+
     @JavascriptInterface
     fun hideKeyboard() {
         // 不能阻塞 JS 线程等待主线程：

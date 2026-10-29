@@ -305,17 +305,50 @@ class VSCodeWebViewClient(
               }
 
               // 这些容器点下去就该出键盘（即使点到的不是 input 元素本身，
-              // 比如聊天输入框、搜索框、命令面板，点容器后内部才出现编辑元素）
+              // 比如聊天输入框、搜索框、命令面板，点容器后内部才出现编辑元素）。
+              // 注意别把外层工具条容器写进来：.interactive-input-part 覆盖了 Agent/Models
+              // 那排按钮，写进来会导致这些按钮在键盘打开时点不动
               var INPUT_REGIONS = [
                 '.monaco-editor',
                 '.quick-input-widget',
                 '.chat-input-container',
-                '.interactive-input-part',
-                '.chat-input-part',
                 '.find-widget',
                 '.search-view',
                 '.terminal-wrapper',
               ];
+
+              // 记录最近一个真正获得焦点的可编辑元素。
+              // Chromium 在输入法激活时会把它换成 native-edit-context，
+              // 那时 activeElement 已不是输入框本身，光 blur 它没有任何效果
+              var lastEditable = null;
+              document.addEventListener('focusin', function (e) {
+                if (isEditable(e.target)) lastEditable = e.target;
+              }, true);
+
+              // 用原生 insets 判断键盘是否真的在显示，比看 DOM 准得多
+              function isImeShowing() {
+                try {
+                  return !!(window.Android && Android.isKeyboardShown && Android.isKeyboardShown());
+                } catch (e) {
+                  return false;
+                }
+              }
+
+              function dismissEditing() {
+                var active = document.activeElement;
+                if (active && active !== document.body && active.blur) active.blur();
+                if (lastEditable && lastEditable.blur) {
+                  lastEditable.blur();
+                  lastEditable = null;
+                }
+                var areas = document.querySelectorAll('textarea, input, [contenteditable="true"]');
+                for (var i = 0; i < areas.length && i < 50; i++) {
+                  if (areas[i].blur) areas[i].blur();
+                }
+                if (window.Android && Android.hideKeyboard) {
+                  try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
+                }
+              }
 
               function allowsKeyboard(el) {
                 if (!el || !el.closest) return false;
@@ -339,29 +372,40 @@ class VSCodeWebViewClient(
                   return;
                 }
 
-                var active = document.activeElement;
-                if (!active || active === document.body) return;
+                // 键盘没开就什么都不做：
+                // 之前无条件 blur 会把刚点开的输入框一起打掉，导致「点输入框也没键盘」
+                if (!isImeShowing()) return;
 
-                // native-edit-context 是 Chromium 的输入法宿主元素，
-                // 它存在就说明输入法还开着；此时点外部会被 Chromium 吞掉
-                // （只发 pointerdown，不发 mousedown/click），界面看起来点不动
-                var imeHost = active.classList && active.classList.contains('native-edit-context');
+                // 先让页面退出编辑态，再收键盘
+                dismissEditing();
 
-                // 焦点不在编辑态也不是输入法宿主，就没什么可收的，别乱动焦点
-                if (!imeHost && !isEditable(active)) return;
+                // Chromium 会在这次触摸的默认处理里把键盘再弹回来，稍后再确认一次。
+                // 但如果这次点击已经打开了命令面板 / 快速选择，就不能再动焦点
+                // （blur 它的输入框会让弹层立刻关掉，表现为「点了按钮没反应」）
+                function settle() {
+                  var widgets = document.querySelectorAll('.quick-input-widget');
+                  var quickVisible = false;
+                  for (var i = 0; i < widgets.length; i++) {
+                    if (widgets[i].getBoundingClientRect().height > 0) quickVisible = true;
+                  }
+                  if (!isImeShowing()) return;
 
-                // 必须真正让编辑器退出编辑态：
-                // 只收键盘不够，焦点还挂在编辑区时，新打开的菜单会立刻被「失焦」关掉
-                if (active.blur) active.blur();
+                  if (quickVisible) {
+                    // 弹层刚打开、输入框自动获得焦点：只收键盘，不动焦点，
+                    // 否则 blur 会让弹层立刻关掉
+                    if (window.Android && Android.hideKeyboard) {
+                      try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
+                    }
+                    return;
+                  }
 
-                var areas = document.querySelectorAll('.monaco-editor textarea, textarea.inputarea');
-                for (var i = 0; i < areas.length; i++) {
-                  if (areas[i].blur) areas[i].blur();
+                  dismissEditing();
                 }
 
-                if (window.Android && Android.hideKeyboard) {
-                  try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
-                }
+                // CPU 紧张时一次收不干净，多确认几次
+                setTimeout(settle, 200);
+                setTimeout(settle, 500);
+                setTimeout(settle, 900);
 
                 // 输入法激活期间，Chromium 会把外部点击吞掉（只发 pointerdown，
                 // 不发 mousedown/click），界面表现为「点菜单没反应」。
