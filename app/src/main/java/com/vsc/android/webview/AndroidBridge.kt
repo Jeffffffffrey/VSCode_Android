@@ -1,14 +1,13 @@
 package com.vsc.android.webview
 
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.ContextWrapper
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebView
 import com.vsc.android.BuildConfig
 import com.vsc.android.runtime.RuntimeConfig
 import java.util.concurrent.CountDownLatch
@@ -22,6 +21,8 @@ import java.util.concurrent.TimeUnit
  */
 class AndroidBridge(
     private val context: Context,
+    /** 用来取正确的 windowToken；Compose 下 currentFocus 不一定是 WebView */
+    private val webView: WebView?,
     private val onToggleFullscreen: () -> Unit,
 ) {
 
@@ -54,11 +55,12 @@ class AndroidBridge(
      */
     @JavascriptInterface
     fun hideKeyboard() {
-        onMain {
-            val activity = context.findActivity() ?: return@onMain
-            val view = activity.currentFocus ?: activity.window.decorView
-            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        // 不能阻塞 JS 线程等待主线程：
+        // 这个调用发生在 pointerdown 期间，阻塞会让 Chromium 丢掉随后的 mousedown/click
+        mainHandler.post {
+            val target = webView ?: return@post
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(target.windowToken, 0)
         }
     }
 
@@ -74,12 +76,6 @@ class AndroidBridge(
     @JavascriptInterface
     fun toggleFullscreen() {
         onMain { onToggleFullscreen() }
-    }
-
-    private tailrec fun Context.findActivity(): Activity? = when (this) {
-        is Activity -> this
-        is ContextWrapper -> baseContext.findActivity()
-        else -> null
     }
 
     private fun <T> onMain(block: () -> T): T? {

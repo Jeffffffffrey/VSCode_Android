@@ -330,25 +330,67 @@ class VSCodeWebViewClient(
               document.addEventListener('pointerdown', function (event) {
                 if (allowsKeyboard(event.target)) return;
 
-                // 菜单、浮层内部的点击完全不干预：
-                // 这些控件依赖焦点保持，一旦失焦会立刻收起（表现为「点二级菜单反而把菜单关掉」）
+                // 已经展开的菜单、浮层内部点击完全不干预：
+                // 这些控件依赖焦点保持，一旦失焦会立刻收起（表现为「点二级菜单反而把菜单关掉」）。
+                // 注意不能写 [role="menuitem"]：菜单栏（☰）的按钮也带这个 role，
+                // 误判会让我们在该收键盘时直接跳过，反而把点击吞掉
                 if (event.target.closest &&
-                    event.target.closest('.monaco-menu, .context-view, .monaco-menu-container, [role="menu"], [role="menuitem"]')) {
+                    event.target.closest('.monaco-menu, .context-view, .monaco-menu-container, [role="menu"]')) {
                   return;
                 }
 
                 var active = document.activeElement;
                 if (!active || active === document.body) return;
 
-                // 只有焦点确实停在可编辑元素上时，输入法适配器才是激活的，
-                // 此时才需要让它退出编辑态；否则 blur 只会打断菜单等控件的焦点
-                if (!isEditable(active)) return;
+                // native-edit-context 是 Chromium 的输入法宿主元素，
+                // 它存在就说明输入法还开着；此时点外部会被 Chromium 吞掉
+                // （只发 pointerdown，不发 mousedown/click），界面看起来点不动
+                var imeHost = active.classList && active.classList.contains('native-edit-context');
 
+                // 焦点不在编辑态也不是输入法宿主，就没什么可收的，别乱动焦点
+                if (!imeHost && !isEditable(active)) return;
+
+                // 必须真正让编辑器退出编辑态：
+                // 只收键盘不够，焦点还挂在编辑区时，新打开的菜单会立刻被「失焦」关掉
                 if (active.blur) active.blur();
+
+                var areas = document.querySelectorAll('.monaco-editor textarea, textarea.inputarea');
+                for (var i = 0; i < areas.length; i++) {
+                  if (areas[i].blur) areas[i].blur();
+                }
 
                 if (window.Android && Android.hideKeyboard) {
                   try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
                 }
+
+                // 输入法激活期间，Chromium 会把外部点击吞掉（只发 pointerdown，
+                // 不发 mousedown/click），界面表现为「点菜单没反应」。
+                // 这里补一次合成鼠标序列，保证单次点击就能生效；
+                // 若真实 click 已经到达则不重复触发。
+                var target = event.target;
+                var realClickArrived = false;
+                var markReal = function () { realClickArrived = true; };
+
+                document.addEventListener('click', markReal, true);
+
+                setTimeout(function () {
+                  document.removeEventListener('click', markReal, true);
+                  if (realClickArrived || !target || !target.dispatchEvent) return;
+
+                  var fire = function (type) {
+                    target.dispatchEvent(new MouseEvent(type, {
+                      bubbles: true,
+                      cancelable: true,
+                      view: window,
+                      button: 0,
+                      clientX: event.clientX,
+                      clientY: event.clientY,
+                    }));
+                  };
+                  fire('mousedown');
+                  fire('mouseup');
+                  fire('click');
+                }, 70);
               }, true);
             })();
         """

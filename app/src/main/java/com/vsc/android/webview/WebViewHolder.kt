@@ -20,7 +20,7 @@ object WebViewHolder {
         webView?.let { return it }
 
         val created = WebViewFactory.create(context)
-        created.addJavascriptInterface(AndroidBridge(context) { }, "Android")
+        created.addJavascriptInterface(AndroidBridge(context, created) { }, "Android")
         created.webViewClient = VSCodeWebViewClient(onExternalUrl)
         created.webChromeClient = VSCodeChromeClient(fileChooserHost)
         webView = created
