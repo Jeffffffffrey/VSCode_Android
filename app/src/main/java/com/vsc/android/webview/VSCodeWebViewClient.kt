@@ -330,8 +330,20 @@ class VSCodeWebViewClient(
               document.addEventListener('pointerdown', function (event) {
                 if (allowsKeyboard(event.target)) return;
 
+                // 菜单、浮层内部的点击完全不干预：
+                // 这些控件依赖焦点保持，一旦失焦会立刻收起（表现为「点二级菜单反而把菜单关掉」）
+                if (event.target.closest &&
+                    event.target.closest('.monaco-menu, .context-view, .monaco-menu-container, [role="menu"], [role="menuitem"]')) {
+                  return;
+                }
+
                 var active = document.activeElement;
                 if (!active || active === document.body) return;
+
+                // 只有焦点确实停在可编辑元素上时，输入法适配器才是激活的，
+                // 此时才需要让它退出编辑态；否则 blur 只会打断菜单等控件的焦点
+                if (!isEditable(active)) return;
+
                 if (active.blur) active.blur();
 
                 if (window.Android && Android.hideKeyboard) {
