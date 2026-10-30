@@ -337,6 +337,38 @@ fun SettingsScreen(
                         InfoRow("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
                     }
 
+                    SectionCard("关于与许可") {
+                        LinkRow(
+                            label = "开源仓库",
+                            value = REPO_DISPLAY_URL,
+                        ) { openUrl(context, REPO_URL) }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        LinkRow(
+                            label = "第三方组件清单",
+                            value = "查看完整许可说明",
+                        ) { openUrl(context, "$REPO_URL/blob/main/docs/LICENSES.md") }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text(
+                            "本项目以 MIT 许可发布。内置的 VS Code / code-server 为 MIT；" +
+                                "Ubuntu Base 与 proot 等含 GPL / LGPL 组件，随包分发须保留其许可声明。",
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            color = VscTextMuted,
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            "非官方构建，与 Microsoft 无任何关联。",
+                            fontSize = 11.sp,
+                            color = VscTextMuted,
+                        )
+                    }
+
                     if (needsRestart) {
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -446,6 +478,35 @@ private fun MarketRow(
                 color = if (warning) VscTextMuted else VscTextMuted,
             )
         }
+    }
+}
+
+private const val REPO_URL = "https://github.com/Jeffffffffrey/VSCode_Android"
+private const val REPO_DISPLAY_URL = "github.com/Jeffffffffrey/VSCode_Android"
+
+@Composable
+private fun LinkRow(label: String, value: String, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickableNoRipple(onClick)
+            .padding(vertical = 2.dp),
+    ) {
+        Text(label, fontSize = 13.sp, color = VscTextSecondary)
+        Spacer(Modifier.height(3.dp))
+        Text(value, fontFamily = MonoFontFamily, fontSize = 11.sp, color = VscAccentLight)
+    }
+}
+
+private fun openUrl(context: Context, url: String) {
+    val launched = runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.isSuccess
+    if (!launched) {
+        Toast.makeText(context, "当前设备没有可用的浏览器", Toast.LENGTH_SHORT).show()
     }
 }
 

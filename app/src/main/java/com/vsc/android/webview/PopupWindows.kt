@@ -31,6 +31,11 @@ object PopupWindows {
         current = null
     }
 
+    /** 仅当当前展示的正是这个窗口时才关闭，避免误关后来打开的其他窗口 */
+    fun closeIf(webView: WebView) {
+        if (current === webView) close()
+    }
+
     private fun closeCurrent() {
         current?.let {
             runCatching { it.stopLoading() }

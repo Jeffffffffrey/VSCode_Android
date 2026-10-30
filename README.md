@@ -76,4 +76,11 @@ docs/                     架构、排障、许可
 
 ## 许可
 
-本项目代码 MIT。内置组件（VS Code / code-server / Ubuntu / proot 等）许可详见 `docs/LICENSES.md`。
+本项目代码以 **MIT** 许可发布，全文见仓库根目录 `LICENSE`。
+
+- 开源仓库：https://github.com/Jeffffffffrey/VSCode_Android
+- 内置组件（VS Code / code-server / Ubuntu Base / proot 等）的许可与合规说明：`docs/LICENSES.md`
+
+> 本项目为非官方构建，与 Microsoft 无任何关联。`VS Code`、`Visual Studio Code`
+> 是 Microsoft Corporation 的商标。APK 内打包的 proot 为 GPL-2.0，其源码可从
+> Termux packages 仓库获取。
