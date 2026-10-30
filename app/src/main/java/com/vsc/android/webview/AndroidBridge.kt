@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -94,6 +95,12 @@ class AndroidBridge(
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.hideSoftInputFromWindow(target.windowToken, 0)
         }
+    }
+
+    /** 调试用：把页面侧的判定打到 logcat（tag=WvGuard），便于真机复现时定位 */
+    @JavascriptInterface
+    fun debugLog(message: String) {
+        if (BuildConfig.DEBUG) Log.d("WvGuard", message)
     }
 
     @JavascriptInterface

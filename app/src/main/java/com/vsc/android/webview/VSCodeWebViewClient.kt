@@ -309,7 +309,6 @@ class VSCodeWebViewClient(
               // 注意别把外层工具条容器写进来：.interactive-input-part 覆盖了 Agent/Models
               // 那排按钮，写进来会导致这些按钮在键盘打开时点不动
               var INPUT_REGIONS = [
-                '.monaco-editor',
                 '.quick-input-widget',
                 '.chat-input-container',
                 '.find-widget',
@@ -368,14 +367,27 @@ class VSCodeWebViewClient(
                 if (!el || !el.closest) return false;
                 if (el.closest('input, textarea, select')) return true;
                 if (el.closest('[contenteditable="true"]')) return true;
+
+                // 只有代码编辑区里的 monaco 才算输入区。
+                // 聊天面板里也有 monaco（渲染代码块/欢迎页），把它算进来的话，
+                // 点聊天面板空白处会被当成「点输入区」而完全不处理，键盘就收不掉
+                if (el.closest('.monaco-editor') && el.closest('.part.editor')) return true;
+
                 for (var i = 0; i < INPUT_REGIONS.length; i++) {
                   if (el.closest(INPUT_REGIONS[i])) return true;
                 }
                 return false;
               }
 
+              function dbg(msg) {
+                try { if (window.Android && Android.debugLog) Android.debugLog(msg); } catch (e) { /* 忽略 */ }
+              }
+
               document.addEventListener('pointerdown', function (event) {
-                if (allowsKeyboard(event.target)) return;
+                if (allowsKeyboard(event.target)) {
+                  dbg('pd allow target=' + (event.target.className || event.target.tagName));
+                  return;
+                }
 
                 // 已经展开的菜单、浮层内部点击完全不干预：
                 // 这些控件依赖焦点保持，一旦失焦会立刻收起（表现为「点二级菜单反而把菜单关掉」）。
@@ -396,6 +408,14 @@ class VSCodeWebViewClient(
                 var clickX = event.clientX;
                 var clickY = event.clientY;
 
+                // 标题栏 / 菜单栏 / 状态栏都是纯按钮，不参与文本编辑。
+                // 对它们移焦点的收益为零，却可能打断菜单的展开流程，因此单独排除
+                var chromeTarget = !!(event.target.closest &&
+                  event.target.closest('.menubar, .titlebar, .part.statusbar'));
+
+                dbg('pd target=' + (event.target.className || event.target.tagName) +
+                    ' ime=' + imeActive + ' chrome=' + chromeTarget + ' at=' + clickX + ',' + clickY);
+
                 if (imeActive) {
                   // 顺序很关键：必须先把焦点移出编辑区，再收键盘。
                   // 只收键盘的话，Chromium 会因为编辑元素仍持有焦点而立刻把它弹回来，
@@ -404,7 +424,7 @@ class VSCodeWebViewClient(
                     if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
                       return;
                     }
-                    moveFocusAwayFromEditor();
+                    if (!chromeTarget) moveFocusAwayFromEditor();
                     if (window.Android && Android.hideKeyboard) {
                       try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
                     }
@@ -418,11 +438,13 @@ class VSCodeWebViewClient(
 
                   setTimeout(function () {
                     document.removeEventListener('click', markReal, true);
+                    var overlay = !!document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block');
+                    dbg('fire? realClick=' + realClickArrived + ' overlay=' + overlay);
                     if (realClickArrived) return;
 
                     // 真实 pointerdown 已经起了作用（菜单/弹层已出现）就不能再补，
                     // 否则相当于又点了一次，会把刚展开的菜单切换关闭
-                    if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
+                    if (overlay) {
                       return;
                     }
 
@@ -465,7 +487,7 @@ class VSCodeWebViewClient(
 
                 // 键盘没开时也要移走焦点：用户手动收键盘后，编辑元素仍持有焦点，
                 // 下一次触摸系统就会把键盘重新弹出来。这里只需要移焦点，不用收键盘。
-                if (!imeActive) {
+                if (!imeActive && !chromeTarget) {
                   setTimeout(function () {
                     if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
                       return;
