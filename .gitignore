@@ -23,6 +23,12 @@ local.properties
 # ---- 内嵌 ELF（由 scripts/prepare-jnilibs.ps1 提取）----
 /app/src/main/jniLibs/arm64-v8a/*.so
 
+# ---- 签名（绝不入库）----
+keystore/
+keystore.properties
+*.jks
+*.keystore
+
 # ---- 工具元数据 ----
 .codebuddy/
 
