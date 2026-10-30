@@ -98,6 +98,23 @@ powershell -ExecutionPolicy Bypass -File scripts/cdp-eval.ps1 -Expression "docum
 `union(ime)` 的作用是键盘弹出时一起收缩内容区，避免输入框被键盘挡住。
 实测视口高度由 776 降到 728（状态栏 22 + 导航条 26），`.part.statusbar` 位于 700–728，完整可见。
 
+### 键盘一会儿弹一会儿收 / 键盘开着时按钮点不动
+Android WebView 的输入法会话是「粘」在编辑元素上的，由此派生出一串问题：
+
+- 键盘开着时 Chromium 会吞掉编辑区以外的点击（只发 `pointerdown`，不发 `mousedown/click`）
+- 对 Chromium 的 `native-edit-context` 调 `blur()` 无效，反复 blur 会造成键盘闪动
+- 用户手动收起键盘后，编辑元素仍持有焦点，下一次触摸系统又会把键盘弹出来
+
+处置顺序（`VSCodeWebViewClient` 的 `IME_GUARD`）：
+
+1. 键盘真在显示时才干预，用原生 `Android.isKeyboardShown()`（读 IME insets）判断
+2. 先把焦点交给 `body`（`tabindex=-1` + `focus()`），这一步才能真正结束会话；`blur()` 不行
+3. 再收键盘
+4. 最后按坐标重新取元素补发 `pointerdown/pointerup` + 鼠标序列 —— 菜单栏是在 `pointerdown` 上展开的，只补 `click` 无效
+5. 补发前先检查是否已经开出弹层，否则相当于又点一次，会把刚打开的菜单切换关闭
+
+时序上必须「移焦点 → 收键盘 → 补点击」分三步延后执行，任一步提前都会被 Chromium 的默认处理覆盖。
+
 ### 扩展安装报 socket hang up
 扩展的平台包（如 CodeLLDB 的 `code-lldb-linux-arm64.vsix`）直接从 github.com 下载，
 国内网络常超时。用代理，或按提示 "Open download URL in a browser" 手动下载后用

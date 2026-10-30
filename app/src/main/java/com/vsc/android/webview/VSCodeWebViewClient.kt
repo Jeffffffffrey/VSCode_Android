@@ -322,7 +322,21 @@ class VSCodeWebViewClient(
               // 那时 activeElement 已不是输入框本身，光 blur 它没有任何效果
               var lastEditable = null;
               document.addEventListener('focusin', function (e) {
-                if (isEditable(e.target)) lastEditable = e.target;
+                if (!isEditable(e.target)) return;
+                lastEditable = e.target;
+
+                // 输入框拿到焦点时显式请求键盘：
+                // Chromium 的隐式弹出在 WebView 刚收过键盘后会失效，
+                // 不兜底就会出现「点输入框没反应」
+                setTimeout(function () {
+                  var active = document.activeElement;
+                  var stillEditing = active === e.target ||
+                    (active && active.classList && active.classList.contains('native-edit-context'));
+                  if (!stillEditing) return;
+                  if (window.Android && Android.showKeyboard) {
+                    try { Android.showKeyboard(); } catch (err) { /* 忽略 */ }
+                  }
+                }, 60);
               }, true);
 
               // 用原生 insets 判断键盘是否真的在显示，比看 DOM 准得多
@@ -334,20 +348,20 @@ class VSCodeWebViewClient(
                 }
               }
 
-              function dismissEditing() {
-                var active = document.activeElement;
-                if (active && active !== document.body && active.blur) active.blur();
-                if (lastEditable && lastEditable.blur) {
-                  lastEditable.blur();
-                  lastEditable = null;
-                }
-                var areas = document.querySelectorAll('textarea, input, [contenteditable="true"]');
-                for (var i = 0; i < areas.length && i < 50; i++) {
-                  if (areas[i].blur) areas[i].blur();
-                }
-                if (window.Android && Android.hideKeyboard) {
-                  try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
-                }
+              /**
+               * 把焦点从编辑区移走。
+               *
+               * 关键点：对 Chromium 的 native-edit-context 调 blur() 是**无效**的，
+               * 所以之前用 blur 循环会表现为「键盘收起了又弹、弹了又收」。
+               * 把焦点交给 body 才能真正结束输入会话，且不需要反复执行。
+               */
+              function moveFocusAwayFromEditor() {
+                try {
+                  if (!document.body.hasAttribute('tabindex')) {
+                    document.body.setAttribute('tabindex', '-1');
+                  }
+                  document.body.focus();
+                } catch (e) { /* 忽略 */ }
               }
 
               function allowsKeyboard(el) {
@@ -372,69 +386,94 @@ class VSCodeWebViewClient(
                   return;
                 }
 
-                // 键盘没开就什么都不做：
-                // 之前无条件 blur 会把刚点开的输入框一起打掉，导致「点输入框也没键盘」
-                if (!isImeShowing()) return;
+                // 输入法是否处于激活态。insets 可能滞后，因此再叠加一个 DOM 信号：
+                // native-edit-context 是 Chromium 的输入法宿主，它存在就说明会话还在
+                var activeNow = document.activeElement;
+                var imeActive = isImeShowing() ||
+                  !!(activeNow && activeNow.classList &&
+                     activeNow.classList.contains('native-edit-context'));
 
-                // 先让页面退出编辑态，再收键盘
-                dismissEditing();
+                var clickX = event.clientX;
+                var clickY = event.clientY;
 
-                // Chromium 会在这次触摸的默认处理里把键盘再弹回来，稍后再确认一次。
-                // 但如果这次点击已经打开了命令面板 / 快速选择，就不能再动焦点
-                // （blur 它的输入框会让弹层立刻关掉，表现为「点了按钮没反应」）
-                function settle() {
-                  var widgets = document.querySelectorAll('.quick-input-widget');
-                  var quickVisible = false;
-                  for (var i = 0; i < widgets.length; i++) {
-                    if (widgets[i].getBoundingClientRect().height > 0) quickVisible = true;
-                  }
-                  if (!isImeShowing()) return;
-
-                  if (quickVisible) {
-                    // 弹层刚打开、输入框自动获得焦点：只收键盘，不动焦点，
-                    // 否则 blur 会让弹层立刻关掉
+                if (imeActive) {
+                  // 顺序很关键：必须先把焦点移出编辑区，再收键盘。
+                  // 只收键盘的话，Chromium 会因为编辑元素仍持有焦点而立刻把它弹回来，
+                  // 菜单栏这类控件在输入法激活时会忽略合成事件，于是点了没反应。
+                  setTimeout(function () {
+                    if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
+                      return;
+                    }
+                    moveFocusAwayFromEditor();
                     if (window.Android && Android.hideKeyboard) {
                       try { Android.hideKeyboard(); } catch (e) { /* 忽略 */ }
                     }
-                    return;
-                  }
+                  }, 150);
 
-                  dismissEditing();
-                }
+                  // 补一次合成点击。按坐标重新取元素：收键盘会触发重排，
+                  // pointerdown 时捕获的节点可能已经脱离文档
+                  var realClickArrived = false;
+                  var markReal = function () { realClickArrived = true; };
+                  document.addEventListener('click', markReal, true);
 
-                // CPU 紧张时一次收不干净，多确认几次
-                setTimeout(settle, 200);
-                setTimeout(settle, 500);
-                setTimeout(settle, 900);
+                  setTimeout(function () {
+                    document.removeEventListener('click', markReal, true);
+                    if (realClickArrived) return;
 
-                // 输入法激活期间，Chromium 会把外部点击吞掉（只发 pointerdown，
-                // 不发 mousedown/click），界面表现为「点菜单没反应」。
-                // 这里补一次合成鼠标序列，保证单次点击就能生效；
-                // 若真实 click 已经到达则不重复触发。
-                var target = event.target;
-                var realClickArrived = false;
-                var markReal = function () { realClickArrived = true; };
+                    // 真实 pointerdown 已经起了作用（菜单/弹层已出现）就不能再补，
+                    // 否则相当于又点了一次，会把刚展开的菜单切换关闭
+                    if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
+                      return;
+                    }
 
-                document.addEventListener('click', markReal, true);
+                    var el = document.elementFromPoint(clickX, clickY) || event.target;
+                    if (!el || !el.dispatchEvent) return;
 
-                setTimeout(function () {
-                  document.removeEventListener('click', markReal, true);
-                  if (realClickArrived || !target || !target.dispatchEvent) return;
-
-                  var fire = function (type) {
-                    target.dispatchEvent(new MouseEvent(type, {
+                    // 补齐 pointer 与 mouse 两套事件：
+                    // VS Code 的菜单栏是在 pointerdown 上展开的，只补 click 不会生效
+                    var pointerOpts = {
                       bubbles: true,
                       cancelable: true,
                       view: window,
                       button: 0,
-                      clientX: event.clientX,
-                      clientY: event.clientY,
-                    }));
-                  };
-                  fire('mousedown');
-                  fire('mouseup');
-                  fire('click');
-                }, 70);
+                      buttons: 1,
+                      pointerId: 1,
+                      pointerType: 'touch',
+                      isPrimary: true,
+                      clientX: clickX,
+                      clientY: clickY,
+                    };
+                    try {
+                      el.dispatchEvent(new PointerEvent('pointerdown', pointerOpts));
+                      pointerOpts.buttons = 0;
+                      el.dispatchEvent(new PointerEvent('pointerup', pointerOpts));
+                    } catch (e) { /* 老 WebView 忽略 */ }
+
+                    var mouseOpts = {
+                      bubbles: true,
+                      cancelable: true,
+                      view: window,
+                      button: 0,
+                      clientX: clickX,
+                      clientY: clickY,
+                    };
+                    el.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+                    el.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
+                    el.dispatchEvent(new MouseEvent('click', mouseOpts));
+                  }, 340);
+                }
+
+                // 键盘没开时也要移走焦点：用户手动收键盘后，编辑元素仍持有焦点，
+                // 下一次触摸系统就会把键盘重新弹出来。这里只需要移焦点，不用收键盘。
+                if (!imeActive) {
+                  setTimeout(function () {
+                    if (document.querySelector('.quick-input-widget, .monaco-menu, .monaco-dialog-modal-block')) {
+                      return;
+                    }
+                    moveFocusAwayFromEditor();
+                  }, 150);
+                }
+
               }, true);
             })();
         """

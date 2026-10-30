@@ -68,6 +68,23 @@ class AndroidBridge(
         return insets.isVisible(WindowInsetsCompat.Type.ime())
     }
 
+    /**
+     * 显式弹出输入法。
+     *
+     * 不能只依赖 Chromium 的隐式 showSoftInput：WebView 未持有窗口焦点、
+     * 或刚被收过一次时，它会静默失败（表现为「点输入框没键盘」）。
+     * 页面在输入框拿到焦点时调用这里兜底。
+     */
+    @JavascriptInterface
+    fun showKeyboard() {
+        mainHandler.post {
+            val view = webView ?: return@post
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            view.requestFocus()
+            imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
     @JavascriptInterface
     fun hideKeyboard() {
         // 不能阻塞 JS 线程等待主线程：
