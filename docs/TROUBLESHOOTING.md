@@ -105,15 +105,24 @@ Android WebView 的输入法会话是「粘」在编辑元素上的，由此派�
 - 对 Chromium 的 `native-edit-context` 调 `blur()` 无效，反复 blur 会造成键盘闪动
 - 用户手动收起键盘后，编辑元素仍持有焦点，下一次触摸系统又会把键盘弹出来
 
-处置顺序（`VSCodeWebViewClient` 的 `IME_GUARD`）：
+处置方式（`VSCodeWebViewClient` 的 `IME_GUARD`）刻意**不按控件适配**，
+只为键盘开着 + 点在非编辑区这一种情况定规则：
 
-1. 键盘真在显示时才干预，用原生 `Android.isKeyboardShown()`（读 IME insets）判断
-2. 先把焦点交给 `body`（`tabindex=-1` + `focus()`），这一步才能真正结束会话；`blur()` 不行
-3. 再收键盘
-4. 最后按坐标重新取元素补发 `pointerdown/pointerup` + 鼠标序列 —— 菜单栏是在 `pointerdown` 上展开的，只补 `click` 无效
-5. 补发前先检查是否已经开出弹层，否则相当于又点一次，会把刚打开的菜单切换关闭
+1. **判据**：`imeVisible()`（原生 IME insets）且落点不是编辑面
+   （`input/textarea/contenteditable` 或 `.monaco-editor`）。
+   不看容器类名，因此新增任何面板都自动覆盖。
+2. **pointerdown 时**：先 `body.focus()` 再收键盘。
+   只收键盘的话编辑元素仍持焦点，Chromium 几百毫秒后会把它重新弹出来。
+3. **pointerup 后 160ms 复核**（不依赖 pointerup，它可能根本不派发）：
+   - 落点在编辑区 → 不动
+   - 已开出菜单/弹层 → 不动；但 450ms 后再确认一次，
+     键盘收起动画引起的重排可能把它挤掉，真挤掉了才补一次触摸
+   - 什么都没发生 → 说明这次点击被吞了，调用 `Android.replayTap()`
+4. `replayTap` 派发真实 `MotionEvent`（不是 DOM 事件），走 Chromium 完整管线，
+   菜单栏这类只认原生手势的控件也能生效。
+   **坐标只需乘 density**，不要乘 `view.scale`（该页面 scale 恰好等于 density，乘两次会偏出 2.75 倍）。
 
-时序上必须「移焦点 → 收键盘 → 补点击」分三步延后执行，任一步提前都会被 Chromium 的默认处理覆盖。
+早期版本按「菜单 / 状态栏 / 聊天面板」逐个列白名单，每加一处就漏一处，已废弃。
 
 ### 扩展安装报 socket hang up
 扩展的平台包（如 CodeLLDB 的 `code-lldb-linux-arm64.vsix`）直接从 github.com 下载，

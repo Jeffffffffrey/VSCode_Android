@@ -5,7 +5,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -83,6 +86,74 @@ class AndroidBridge(
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             view.requestFocus()
             imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    /**
+     * 在同一坐标重放一次真实触摸。
+     *
+     * 输入法激活期间，Chromium 会把编辑区以外的第一次触摸吞掉（只发 pointerdown，
+     * 不发 mousedown/click）。合成 DOM 事件只能覆盖一部分控件——菜单栏这类依赖
+     * 原生手势路径的控件不认。这里改走 [android.webkit.WebView.dispatchTouchEvent]，
+     * 派发的是真实 MotionEvent，Chromium 会像用户亲手点一样完整处理，
+     * 因此不需要为任何控件单独适配。
+     */
+    @JavascriptInterface
+    fun replayTap(cssX: Float, cssY: Float) {
+        mainHandler.post {
+            val view = webView ?: return@post
+            if (view.width <= 0 || view.height <= 0) return@post
+
+            // 页面坐标 → 视图坐标：只乘 density。
+            // 不能再乘 view.scale —— 这个页面的 scale 恰好也等于 density，
+            // 两者相乘会把落点推远一倍多
+            val density = view.resources.displayMetrics.density
+            val x = cssX * density + view.scrollX
+            val y = cssY * density + view.scrollY
+            if (x < 0f || y < 0f || x > view.width || y > view.height) {
+                Log.w("AndroidBridge", "replayTap 超出范围: $x,$y (${view.width}x${view.height})")
+                return@post
+            }
+
+            // 必须补齐 pointer 属性（toolType=手指）：只给坐标的话 Chromium 可能
+            // 认为这不是一次有效的触摸而不做命中测试
+            val props = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val coords = MotionEvent.PointerCoords().apply {
+                this.x = x
+                this.y = y
+                pressure = 1f
+                size = 1f
+            }
+
+            val now = SystemClock.uptimeMillis()
+            fun build(action: Int, eventTime: Long) = MotionEvent.obtain(
+                now,
+                eventTime,
+                action,
+                1,
+                arrayOf(props),
+                arrayOf(coords),
+                0,
+                0,
+                1f,
+                1f,
+                0,
+                0,
+                InputDevice.SOURCE_TOUCHSCREEN,
+                0,
+            )
+
+            val down = build(MotionEvent.ACTION_DOWN, now)
+            val up = build(MotionEvent.ACTION_UP, now + 40)
+            runCatching {
+                view.dispatchTouchEvent(down)
+                view.dispatchTouchEvent(up)
+            }
+            down.recycle()
+            up.recycle()
         }
     }
 
