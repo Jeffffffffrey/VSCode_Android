@@ -23,8 +23,8 @@ android {
         applicationId = "com.vsc.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         // rootfs / proot / busybox 均为 aarch64，多 ABI 只会让包体翻倍
         ndk {
